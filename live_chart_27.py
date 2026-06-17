@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Quotex Pro Trader — Automated Login & URL Parameter Version (Fully Fixed)
+Quotex Pro Trader — Automated Login & URL Parameter Version (Index Natively Fixed)
 ✅ Bypasses HTML login completely using hardcoded credentials
 ✅ Reads URL parameters (?Pair=USDPHP_otc&timeframe=1) automatically
-✅ Fixed Root 404 Error using custom Bottle routing for Render Cloud
+✅ Fixed Root 404 Error natively by using index.html for Render Cloud
 """
 import asyncio
 import threading
@@ -148,8 +148,8 @@ TIMEFRAMES = {
 }
 
 CLIENT: Optional[Quotex] = None
-CURRENT_ASSET = "USD/PHP (OTC)"  # Default Asset
-CURRENT_TIMEFRAME = "1m"          # Default Timeframe
+CURRENT_ASSET = "USD/PHP (OTC)"  
+CURRENT_TIMEFRAME = "1m"          
 CANDLES: Dict[str, Dict[str, List[dict]]] = {}
 CURRENT_CANDLE: Dict[str, Dict[str, dict]] = {}
 SERVER_TIME_OFFSET = 0
@@ -374,7 +374,6 @@ threading.Thread(target=run_auto_login, daemon=True, name="AutoLoginThread").sta
 # ======================
 @eel.expose
 def process_url_parameters(pair_param: Optional[str], tf_param: Optional[str]):
-    """Processes parameters passed from browser URL query strings"""
     global CURRENT_TIMEFRAME, CURRENT_ASSET
     
     if not pair_param: pair_param = "USDPHP_otc"
@@ -423,9 +422,9 @@ def get_connection_status():
     return {"connected": is_websocket_connected(), "assets_loaded": ASSETS_LOADED, "current_asset": CURRENT_ASSET, "current_timeframe": CURRENT_TIMEFRAME, "login_success": LOGIN_SUCCESS}
 
 # ======================
-# Dynamic HTML Generator
+# Dynamic HTML Generator (Natively Generates index.html)
 # ======================
-def write_chart_html():
+def write_index_html():
     html_content = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -509,7 +508,8 @@ def write_chart_html():
     </script>
 </body>
 </html>"""
-    with open("web/chart.html", "w", encoding="utf-8") as f:
+    # 📝 Natively write to index.html for default route mapping
+    with open("web/index.html", "w", encoding="utf-8") as f:
         f.write(html_content)
 
 # ======================
@@ -517,15 +517,10 @@ def write_chart_html():
 # ======================
 if __name__ == '__main__':
     os.makedirs("web", exist_ok=True)
-    write_chart_html()
+    write_index_html()
     
     eel.init('web')
     port = int(os.environ.get("PORT", 8080))
     
-    # 👑 FIXED ROOT ROUTING: কেউ মূল ডোমেইনে ঢুকলে সরাসরি chart.html সার্ভ হবে
-    @eel.btl.route('/')
-    def serve_root():
-        return eel.btl.static_file('chart.html', root='web')
-    
-    # Server start without page keyword bugs
-    eel.start('chart.html', host='0.0.0.0', port=port, mode=None)
+    # 🚀 Start server with index.html natively solves root mapping issues
+    eel.start('index.html', host='0.0.0.0', port=port, mode=None)
