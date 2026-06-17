@@ -1,0 +1,3 @@
+eel
+certifi
+git+https://github.com/cleitonleonel/pyquotex.git@master
