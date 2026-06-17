@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Quotex Pro Trader — Automated Login & URL Parameter Version (Fixed)
+Quotex Pro Trader — Automated Login & URL Parameter Version (Fully Fixed)
 ✅ Bypasses HTML login completely using hardcoded credentials
 ✅ Reads URL parameters (?Pair=USDPHP_otc&timeframe=1) automatically
-✅ Fully optimized for Render Cloud Deployment without start() argument bugs
+✅ Fixed Root 404 Error using custom Bottle routing for Render Cloud
 """
 import asyncio
 import threading
@@ -207,7 +207,7 @@ def price_sleep_watcher():
             try:
                 internal = DISPLAY_TO_INTERNAL.get(CURRENT_ASSET)
                 if internal and is_websocket_connected():
-                    period = TIMEFRAMES.get(CURRENT_TIMRAME, 60)
+                    period = TIMEFRAMES.get(CURRENT_TIMEFRAME, 60)
                     asyncio.run_coroutine_threadsafe(CLIENT.start_realtime_price(internal, period), ASYNC_LOOP).result(timeout=10)
                     LAST_TICK_TIME = time.time()
             except Exception as e:
@@ -377,12 +377,10 @@ def process_url_parameters(pair_param: Optional[str], tf_param: Optional[str]):
     """Processes parameters passed from browser URL query strings"""
     global CURRENT_TIMEFRAME, CURRENT_ASSET
     
-    # URL Format parsing logic
     if not pair_param: pair_param = "USDPHP_otc"
     if not tf_param or tf_param == "1": tf_param = "1m"
     elif tf_param.isdigit(): tf_param = f"{tf_param}m"
     
-    # Internal code to display name handling
     display_name = ASSET_DISPLAY_MAP.get(pair_param, pair_param)
     if display_name not in DISPLAY_TO_INTERNAL and pair_param in DISPLAY_TO_INTERNAL:
         display_name = pair_param
@@ -393,7 +391,6 @@ def process_url_parameters(pair_param: Optional[str], tf_param: Optional[str]):
     log(f"📥 URL Request -> Asset: {display_name} | Timeframe: {CURRENT_TIMEFRAME}", level=1)
     
     def run():
-        # Wait until backend authentication is done
         while not LOGIN_SUCCESS:
             time.sleep(0.5)
         future = asyncio.run_coroutine_threadsafe(start_streaming(display_name), ASYNC_LOOP)
@@ -525,5 +522,10 @@ if __name__ == '__main__':
     eel.init('web')
     port = int(os.environ.get("PORT", 8080))
     
-    # 🛠️ FIXED: Removed 'page=' keyword to prevent TypeError on cloud instance
+    # 👑 FIXED ROOT ROUTING: কেউ মূল ডোমেইনে ঢুকলে সরাসরি chart.html সার্ভ হবে
+    @eel.btl.route('/')
+    def serve_root():
+        return eel.btl.static_file('chart.html', root='web')
+    
+    # Server start without page keyword bugs
     eel.start('chart.html', host='0.0.0.0', port=port, mode=None)
