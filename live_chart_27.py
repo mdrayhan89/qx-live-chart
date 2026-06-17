@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Quotex Pro Trader — Automated Login & URL Parameter Version
+Quotex Pro Trader — Automated Login & URL Parameter Version (Fixed)
 ✅ Bypasses HTML login completely using hardcoded credentials
 ✅ Reads URL parameters (?Pair=USDPHP_otc&timeframe=1) automatically
-✅ Fully optimized for Render Cloud Deployment
+✅ Fully optimized for Render Cloud Deployment without start() argument bugs
 """
 import asyncio
 import threading
@@ -207,7 +207,7 @@ def price_sleep_watcher():
             try:
                 internal = DISPLAY_TO_INTERNAL.get(CURRENT_ASSET)
                 if internal and is_websocket_connected():
-                    period = TIMEFRAMES.get(CURRENT_TIMEFRAME, 60)
+                    period = TIMEFRAMES.get(CURRENT_TIMRAME, 60)
                     asyncio.run_coroutine_threadsafe(CLIENT.start_realtime_price(internal, period), ASYNC_LOOP).result(timeout=10)
                     LAST_TICK_TIME = time.time()
             except Exception as e:
@@ -429,7 +429,6 @@ def get_connection_status():
 # Dynamic HTML Generator
 # ======================
 def write_chart_html():
-    # অটোমেটিক প্যারামিটার ডিটেকশন সহ প্রিমিয়াম চার্ট UI জেনারেটর
     html_content = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -458,7 +457,6 @@ def write_chart_html():
     <script>
         let chart, candlestickSeries;
         
-        // Initialize Lightweight Chart
         function initChart() {
             const container = document.getElementById('chart-container');
             chart = LightweightCharts.createChart(container, {
@@ -481,7 +479,6 @@ def write_chart_html():
             });
         }
 
-        // Handle Realtime Backend Stream updates
         eel.expose(updateChart);
         function updateChart(data) {
             document.getElementById('loading').style.display = 'none';
@@ -496,16 +493,14 @@ def write_chart_html():
         window.addEventListener('DOMContentLoaded', () => {
             initChart();
             
-            // Extract and parse current browser address bar parameters
             const urlParams = new URLSearchParams(window.location.search);
-            const pair = urlParams.get('Pair');      // e.g. USDPHP_otc
-            const timeframe = urlParams.get('timeframe'); // e.g. 1
+            const pair = urlParams.get('Pair');      
+            const timeframe = urlParams.get('timeframe'); 
             
             function checkLoginAndLoad() {
                 eel.get_connection_status()(status => {
                     if (status.login_success) {
                         document.getElementById('loading').innerText = "📊 Loading Market Candles...";
-                        // Transmit parameters directly to python backend logic
                         eel.process_url_parameters(pair, timeframe);
                     } else {
                         setTimeout(checkLoginAndLoad, 1000);
@@ -530,5 +525,5 @@ if __name__ == '__main__':
     eel.init('web')
     port = int(os.environ.get("PORT", 8080))
     
-    # Serves the chart.html directly at the root endpoint /
-    eel.start(page='chart.html', host='0.0.0.0', port=port, mode=None)
+    # 🛠️ FIXED: Removed 'page=' keyword to prevent TypeError on cloud instance
+    eel.start('chart.html', host='0.0.0.0', port=port, mode=None)
