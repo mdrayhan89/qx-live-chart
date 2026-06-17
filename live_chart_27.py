@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Quotex Pro Trader — CLEAN CONSOLE VERSION (Render Cloud Compatible)
-✅ Minimal console output - only essential messages
-✅ Official PyQuotex Login + Hybrid Lazy Loading
-✅ Candle loading starts AFTER chart is opened
-✅ Loads 1m timeframe FIRST, then others gradually
+Quotex Pro Trader — Automated Login & URL Parameter Version
+✅ Bypasses HTML login completely using hardcoded credentials
+✅ Reads URL parameters (?Pair=USDPHP_otc&timeframe=1) automatically
+✅ Fully optimized for Render Cloud Deployment
 """
 import asyncio
 import threading
@@ -34,12 +33,13 @@ except ImportError as e:
     sys.exit(1)
 
 # ======================
-# ⚙️ CONFIG: Console Verbosity Level
+# ⚙️ CONFIG: Credentials & Console Verbosity
 # ======================
 CONSOLE_LEVEL = 1
+QUOTEX_EMAIL = "trrayhanislam786@gmail.com"
+QUOTEX_PASSWORD = "Mdrayhan@655"
 
 def log(msg: str, level: int = 1):
-    """Print only if level <= CONSOLE_LEVEL"""
     if level <= CONSOLE_LEVEL:
         print(msg)
 
@@ -74,12 +74,11 @@ def ui_loop():
 threading.Thread(target=ui_loop, daemon=True, name="UIUpdater").start()
 
 # ======================
-# Global State
+# Global State & Asset Maps
 # ======================
 LAST_TICK_TIME = time.time()
 ASSET_DISPLAY_MAP: Dict[str, str] = {}
 
-# ✅ Assets Maps
 forex_assets = {
     "AUDCAD": "AUD/CAD", "AUDCAD_otc": "AUD/CAD (OTC)", "AUDCHF": "AUD/CHF", "AUDCHF_otc": "AUD/CHF (OTC)",
     "AUDJPY": "AUD/JPY", "AUDJPY_otc": "AUD/JPY (OTC)", "AUDNZD_otc": "AUD/NZD (OTC)", "AUDUSD": "AUD/USD",
@@ -147,9 +146,10 @@ TIMEFRAMES = {
     "10m": 600, "15m": 900, "30m": 1800,
     "1h": 3600, "4h": 14400
 }
+
 CLIENT: Optional[Quotex] = None
-CURRENT_ASSET = "AUD/CAD (OTC)"
-CURRENT_TIMEFRAME = "1m"
+CURRENT_ASSET = "USD/PHP (OTC)"  # Default Asset
+CURRENT_TIMEFRAME = "1m"          # Default Timeframe
 CANDLES: Dict[str, Dict[str, List[dict]]] = {}
 CURRENT_CANDLE: Dict[str, Dict[str, dict]] = {}
 SERVER_TIME_OFFSET = 0
@@ -165,118 +165,71 @@ CHART_OPENED = False
 BACKGROUND_LOADER_TASK = None
 
 # ======================
-# Helpers
+# Core Logic & Watchers
 # ======================
 def is_websocket_connected() -> bool:
     try:
-        if not CLIENT or not CLIENT.api:
-            return False
-        if hasattr(CLIENT.api, '_is_connected'):
-            return bool(CLIENT.api._is_connected)
+        if not CLIENT or not CLIENT.api: return False
+        if hasattr(CLIENT.api, '_is_connected'): return bool(CLIENT.api._is_connected)
         if hasattr(CLIENT.api, 'websocket_client'):
             ws = CLIENT.api.websocket_client
             if hasattr(ws, 'wss') and hasattr(ws.wss, 'sock'):
                 return ws.wss.sock is not None and getattr(ws.wss.sock, 'connected', False)
-            if hasattr(ws, 'connected'):
-                return bool(ws.connected)
-        if hasattr(CLIENT.api, 'check_connect'):
-            return CLIENT.api.check_connect()
         return True
     except Exception:
         return False
 
 async def realtime_heartbeat():
-    global CLIENT, CURRENT_ASSET
     while True:
         await asyncio.sleep(45)
-        try:
-            if CLIENT and CURRENT_ASSET and is_websocket_connected():
-                log("💓 heartbeat ok", level=2)
-        except Exception as e:
-            if CONSOLE_LEVEL >= 2:
-                print(f"⚠️ Heartbeat error: {e}")
+        if CLIENT and CURRENT_ASSET and is_websocket_connected():
+            log("💓 heartbeat ok", level=2)
 
 async def market_activity_ping():
-    global CLIENT, CURRENT_ASSET, CURRENT_TIMEFRAME
     while True:
         await asyncio.sleep(180)
         try:
-            if not CLIENT or not CLIENT.api or CURRENT_ASSET is None:
-                continue
-            internal_asset = DISPLAY_TO_INTERNAL.get(CURRENT_ASSET, "AUDCAD_otc")
+            if not CLIENT or not CLIENT.api or CURRENT_ASSET is None: continue
+            internal_asset = DISPLAY_TO_INTERNAL.get(CURRENT_ASSET, "USDPHP_otc")
             period_sec = TIMEFRAMES.get(CURRENT_TIMEFRAME, 60)
-            candles = await CLIENT.get_candles(
-                asset=internal_asset,
-                end_from_time=time.time(),
-                offset=period_sec * 2,
-                period=period_sec
-            )
+            candles = await CLIENT.get_candles(asset=internal_asset, end_from_time=time.time(), offset=period_sec * 2, period=period_sec)
             log(f"📡 Market ping: {len(candles) if candles else 0} candles", level=2)
         except Exception as e:
-            if CONSOLE_LEVEL >= 2:
-                print(f"⚠️ Market ping failed: {str(e)[:80]}")
+            log(f"⚠️ Market ping failed: {str(e)[:80]}", level=2)
 
 def price_sleep_watcher():
-    global LAST_TICK_TIME, CLIENT, CURRENT_ASSET, ASYNC_LOOP, REALTIME_RUNNING
+    global LAST_TICK_TIME, REALTIME_RUNNING
     while True:
         time.sleep(20)
         diff = time.time() - LAST_TICK_TIME
-        if diff > 60:
+        if diff > 60 and CLIENT and CLIENT.api and CURRENT_ASSET and not REALTIME_RUNNING:
             log(f"♻️ Stream idle {int(diff)}s — restarting", level=1)
             try:
-                if CLIENT and CLIENT.api and CURRENT_ASSET and not REALTIME_RUNNING:
-                    internal = DISPLAY_TO_INTERNAL.get(CURRENT_ASSET)
-                    if internal and is_websocket_connected():
-                        period = TIMEFRAMES.get(CURRENT_TIMEFRAME, 60)
-                        future = asyncio.run_coroutine_threadsafe(
-                            CLIENT.start_realtime_price(internal, period),
-                            ASYNC_LOOP
-                        )
-                        future.result(timeout=10)
-                        LAST_TICK_TIME = time.time()
+                internal = DISPLAY_TO_INTERNAL.get(CURRENT_ASSET)
+                if internal and is_websocket_connected():
+                    period = TIMEFRAMES.get(CURRENT_TIMEFRAME, 60)
+                    asyncio.run_coroutine_threadsafe(CLIENT.start_realtime_price(internal, period), ASYNC_LOOP).result(timeout=10)
+                    LAST_TICK_TIME = time.time()
             except Exception as e:
-                if CONSOLE_LEVEL >= 2:
-                    print(f"❌ Restart failed: {e}")
+                log(f"❌ Restart failed: {e}", level=2)
 
 threading.Thread(target=price_sleep_watcher, daemon=True, name="PriceWatcher").start()
 
-def safe_stop_realtime_price(asset: str):
-    if CLIENT and CLIENT.api:
-        try:
-            future = asyncio.run_coroutine_threadsafe(
-                CLIENT.stop_realtime_price(asset),
-                ASYNC_LOOP
-            )
-            future.result(timeout=5)
-        except Exception as e:
-            if CONSOLE_LEVEL >= 2:
-                print(f"⚠️ stop_realtime_price error: {e}")
-
 def process_candle_data(raw_candles: List[dict], period: int) -> List[dict]:
-    if not raw_candles:
-        return []
+    if not raw_candles: return []
     if raw_candles and not raw_candles[0].get("open"):
-        try:
-            return process_candles(raw_candles, period)
-        except Exception as e:
-            if CONSOLE_LEVEL >= 2:
-                print(f"⚠️ process_candles failed: {e}")
+        try: return process_candles(raw_candles, period)
+        except Exception: pass
     formatted = []
     for c in raw_candles:
-        if not isinstance(c, dict):
-            continue
+        if not isinstance(c, dict): continue
         try:
-            if not all(k in c for k in ("time", "open", "high", "low", "close")):
-                continue
-            candle_time = int(float(c["time"]))
-            aligned_time = (candle_time // period) * period
+            if not all(k in c for k in ("time", "open", "high", "low", "close")): continue
             formatted.append({
-                "time": aligned_time,
-                "open": float(c["open"]), "high": float(c["high"]),
-                "low": float(c["low"]), "close": float(c["close"])
+                "time": (int(float(c["time"])) // period) * period,
+                "open": float(c["open"]), "high": float(c["high"]), "low": float(c["low"]), "close": float(c["close"])
             })
-        except (ValueError, KeyError, TypeError):
-            continue
+        except Exception: continue
     formatted.sort(key=lambda x: x["time"])
     return formatted
 
@@ -287,19 +240,12 @@ def update_candle(asset: str, frame: str, price: float, ts_sec: int):
     curr = CURRENT_CANDLE.get(asset, {}).get(frame, {})
     if not curr or curr.get("time") != candle_start:
         if curr:
-            if asset not in CANDLES:
-                CANDLES[asset] = {}
-            if frame not in CANDLES[asset]:
-                CANDLES[asset][frame] = []
+            if asset not in CANDLES: CANDLES[asset] = {}
+            if frame not in CANDLES[asset]: CANDLES[asset][frame] = []
             CANDLES[asset][frame].append(curr.copy())
-            if len(CANDLES[asset][frame]) > 200:
-                CANDLES[asset][frame] = CANDLES[asset][frame][-200:]
-        if asset not in CURRENT_CANDLE:
-            CURRENT_CANDLE[asset] = {}
-        CURRENT_CANDLE[asset][frame] = {
-            "time": int(candle_start), "open": float(price), "high": float(price),
-            "low": float(price), "close": float(price)
-        }
+            if len(CANDLES[asset][frame]) > 200: CANDLES[asset][frame] = CANDLES[asset][frame][-200:]
+        if asset not in CURRENT_CANDLE: CURRENT_CANDLE[asset] = {}
+        CURRENT_CANDLE[asset][frame] = {"time": int(candle_start), "open": float(price), "high": float(price), "low": float(price), "close": float(price)}
     else:
         if price > curr["high"]: curr["high"] = float(price)
         if price < curr["low"]: curr["low"] = float(price)
@@ -310,17 +256,11 @@ def send_to_ui(asset: str, timeframe: str):
     all_candles = CANDLES.get(asset, {}).get(timeframe, []).copy()
     curr = CURRENT_CANDLE.get(asset, {}).get(timeframe)
     if curr:
-        if all_candles and all_candles[-1]["time"] == curr["time"]:
-            all_candles[-1] = curr
-        else:
-            all_candles.append(curr)
+        if all_candles and all_candles[-1]["time"] == curr["time"]: all_candles[-1] = curr
+        else: all_candles.append(curr)
     all_candles.sort(key=lambda x: x["time"])
     payload = {
-        "candles": [
-            {"time": int(c["time"]), "open": float(c["open"]), "high": float(c["high"]),
-             "low": float(c["low"]), "close": float(c["close"])} for c in all_candles
-        ],
-        "asset": asset, "timeframe": timeframe,
+        "candles": all_candles, "asset": asset, "timeframe": timeframe,
         "timeframe_seconds": TIMEFRAMES.get(timeframe, 60),
         "server_time": time.time() + SERVER_TIME_OFFSET,
         "last_candle_time": int(curr["time"]) if curr else 0
@@ -330,22 +270,15 @@ def send_to_ui(asset: str, timeframe: str):
         return True
     return False
 
-# 🔥 Realtime price loop
 async def realtime_price_loop(asset_display: str):
     global LAST_TICK_TIME, REALTIME_RUNNING
-    if REALTIME_RUNNING:
-        log(f"⚠️ Loop already running for {asset_display}", level=2)
-        stop_realtime_loop()
-        await asyncio.sleep(0.5)
     internal = DISPLAY_TO_INTERNAL.get(asset_display)
-    if not internal or not CLIENT:
-        return
+    if not internal or not CLIENT: return
     REALTIME_RUNNING = True
-    log(f"🔄 realtime_price_loop started", level=2)
     while REALTIME_RUNNING:
         try:
             data = await CLIENT.get_realtime_price(internal)
-            if data and len(data) > 0:
+            if data:
                 latest = data[-1]
                 price = float(latest.get("price", latest.get("close", 0)))
                 timestamp = latest.get("time", time.time())
@@ -355,318 +288,247 @@ async def realtime_price_loop(asset_display: str):
                     SERVER_TIME_OFFSET = timestamp - time.time()
                     for frame in TIMEFRAMES:
                         update_candle(asset_display, frame, price, ts_sec)
-                    if send_to_ui(asset_display, CURRENT_TIMEFRAME):
-                        if CONSOLE_LEVEL >= 2:
-                            print(f"📤 Live: {price:.5f} @ {asset_display}/{CURRENT_TIMEFRAME}", end="\r")
+                    send_to_ui(asset_display, CURRENT_TIMEFRAME)
             await asyncio.sleep(0.2)
-        except Exception as e:
-            if CONSOLE_LEVEL >= 2:
-                print(f"⚠️ realtime_price_loop error: {e}")
+        except Exception:
             await asyncio.sleep(1)
-    log(f"⏹️ realtime_price_loop stopped", level=2)
 
-def stop_realtime_loop():
-    global REALTIME_RUNNING
-    REALTIME_RUNNING = False
-
-# ======================
-# Connection & Streaming — CLEAN VERSION
-# ======================
 async def load_timeframe_data(asset_display: str, tf_name: str, period_sec: int) -> List[dict]:
     global CANDLES
-    if not CLIENT or not CLIENT.api:
-        return []
-    internal = DISPLAY_TO_INTERNAL.get(asset_display, "AUDCAD_otc")
-    if not internal:
-        return []
+    if not CLIENT or not CLIENT.api: return []
+    internal = DISPLAY_TO_INTERNAL.get(asset_display, "USDPHP_otc")
     try:
-        log(f"📥 Loading {tf_name}...", level=2)
-        hist_data = await CLIENT.get_candles(
-            asset=internal, end_from_time=time.time(),
-            offset=199 * period_sec, period=period_sec
-        )
+        hist_data = await CLIENT.get_candles(asset=internal, end_from_time=time.time(), offset=199 * period_sec, period=period_sec)
         loaded = process_candle_data(hist_data, period_sec)
-        log(f"✅ {tf_name}: {len(loaded)} candles", level=2)
-        if asset_display not in CANDLES:
-            CANDLES[asset_display] = {}
+        if asset_display not in CANDLES: CANDLES[asset_display] = {}
         CANDLES[asset_display][tf_name] = loaded[-199:]
         return loaded[-199:]
-    except Exception as e:
-        if CONSOLE_LEVEL >= 2:
-            print(f"⚠️ Failed to load {tf_name}: {e}")
+    except Exception:
         return []
 
-# 🔥 Chart Open Handler
-async def chart_opened_loader(asset_display: str):
-    global CHART_OPENED, BACKGROUND_LOADER_TASK
-    if CHART_OPENED:
-        return
-    CHART_OPENED = True
-    log(f"📊 Chart opened — loading candles...", level=1)
-    
-    await load_timeframe_data(asset_display, "1m", TIMEFRAMES["1m"])
-    send_to_ui(asset_display, "1m")
-    
-    internal = DISPLAY_TO_INTERNAL.get(asset_display)
-    if internal:
-        for i in range(3):
-            try:
-                await CLIENT.start_realtime_price(internal, TIMEFRAMES["1m"])
-                break
-            except Exception as e:
-                if CONSOLE_LEVEL >= 2:
-                    print(f"⚠️ Retry {i+1}/3: {e}")
-                await asyncio.sleep(2)
-        asyncio.create_task(realtime_price_loop(asset_display))
-        BACKGROUND_LOADER_TASK = asyncio.create_task(smart_background_loader(asset_display))
-
-# 🔥 Smart Background Loader
 async def smart_background_loader(asset_display: str):
     priority_order = ["5m", "15m", "30m", "1h", "10s", "30s", "2m", "3m", "10m", "4h", "5s", "15s"]
     for tf in priority_order:
-        if CURRENT_ASSET != asset_display:
-            break
-        if tf == CURRENT_TIMEFRAME or tf in CANDLES.get(asset_display, {}):
-            continue
+        if CURRENT_ASSET != asset_display: break
+        if tf == CURRENT_TIMEFRAME or tf in CANDLES.get(asset_display, {}): continue
         try:
             await load_timeframe_data(asset_display, tf, TIMEFRAMES[tf])
-            await asyncio.sleep(2)
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            if CONSOLE_LEVEL >= 2:
-                print(f"⚠️ Background error {tf}: {e}")
-            await asyncio.sleep(3)
-
-# 🔥 Official PyQuotex Login
-async def connect_with_retry(max_attempts: int = 5) -> Tuple[bool, str]:
-    global CLIENT
-    for attempt in range(1, max_attempts + 1):
-        try:
-            email, password = credentials()
-            CLIENT = Quotex(email=email, password=password, host="qxbroker.com", lang="en")
-            check, reason = await CLIENT.connect()
-            if check:
-                return True, reason
-            session_file = Path("session.json")
-            if session_file.exists():
-                session_file.unlink()
-            if attempt < max_attempts:
-                await asyncio.sleep(2)
-        except Exception as e:
-            if CONSOLE_LEVEL >= 2:
-                print(f"❌ Attempt {attempt}: {e}")
-            if attempt < max_attempts:
-                await asyncio.sleep(2)
-    return False, "Connection failed"
-
-async def connect_to_quotex(email: str, password: str) -> Tuple[bool, str]:
-    global CLIENT, ASSETS_LOADED, LOGIN_SUCCESS
-    try:
-        log("🔐 Connecting...", level=1)
-        config_dir = Path.home() / ".pyquotex"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        creds_file = config_dir / "credentials.json"
-        with open(creds_file, 'w') as f:
-            json.dump({"email": email, "password": password}, f)
-        success, reason = await connect_with_retry(max_attempts=5)
-        if not success:
-            if creds_file.exists():
-                creds_file.unlink()
-            return False, reason
-        await CLIENT.change_account("PRACTICE")
-        await CLIENT.get_all_assets()
-        ASSETS_LOADED = True
-        asyncio.create_task(realtime_heartbeat())
-        asyncio.create_task(market_activity_ping())
-        LOGIN_SUCCESS = True
-        log("✅ Login successful", level=1)
-        return True, ""
-    except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+            await asyncio.sleep(1.5)
+        except asyncio.CancelledError: break
+        except Exception: pass
 
 async def start_streaming(asset_display: str):
-    global CURRENT_ASSET, CANDLES, CURRENT_CANDLE, REALTIME_RUNNING, BACKGROUND_LOADER_TASK
-    if REALTIME_RUNNING:
-        stop_realtime_loop()
-        await asyncio.sleep(0.5)
-    if BACKGROUND_LOADER_TASK:
-        BACKGROUND_LOADER_TASK.cancel()
-        await asyncio.sleep(0.2)
-    if not CLIENT or not CLIENT.api:
-        return
+    global CURRENT_ASSET, REALTIME_RUNNING, BACKGROUND_LOADER_TASK
+    if REALTIME_RUNNING: REALTIME_RUNNING = False; await asyncio.sleep(0.3)
+    if BACKGROUND_LOADER_TASK: BACKGROUND_LOADER_TASK.cancel()
+    if not CLIENT or not CLIENT.api: return
+    
     internal = DISPLAY_TO_INTERNAL.get(asset_display)
-    if not internal:
-        return
-    if CURRENT_ASSET and CLIENT:
-        old_internal = DISPLAY_TO_INTERNAL.get(CURRENT_ASSET)
-        if old_internal:
-            safe_stop_realtime_price(old_internal)
+    if not internal: return
+    
     CURRENT_ASSET = asset_display
-    if asset_display not in CANDLES:
-        CANDLES[asset_display] = {}
-    if asset_display not in CURRENT_CANDLE:
-        CURRENT_CANDLE[asset_display] = {}
     period_sec = TIMEFRAMES.get(CURRENT_TIMEFRAME, 60)
     await load_timeframe_data(asset_display, CURRENT_TIMEFRAME, period_sec)
     send_to_ui(CURRENT_ASSET, CURRENT_TIMEFRAME)
-    await asyncio.sleep(1)
-    subscription_success = False
-    for i in range(3):
-        try:
-            await CLIENT.start_realtime_price(internal, period_sec)
-            subscription_success = True
-            break
-        except Exception as e:
-            if CONSOLE_LEVEL >= 2:
-                print(f"⚠️ Retry {i+1}/3: {e}")
-            await asyncio.sleep(2)
-    if subscription_success:
-        asyncio.create_task(realtime_price_loop(asset_display))
-        BACKGROUND_LOADER_TASK = asyncio.create_task(smart_background_loader(asset_display))
+    
+    try: await CLIENT.start_realtime_price(internal, period_sec)
+    except Exception: pass
+    
+    asyncio.create_task(realtime_price_loop(asset_display))
+    BACKGROUND_LOADER_TASK = asyncio.create_task(smart_background_loader(asset_display))
 
 # ======================
-# Eel Functions
+# Automated Background Login
 # ======================
-@eel.expose
-def login(email: str, password: str):
-    def run():
+async def connect_to_quotex_automated():
+    global CLIENT, ASSETS_LOADED, LOGIN_SUCCESS
+    log("🔐 Initiating Automatic Quotex Login...", level=1)
+    for attempt in range(1, 6):
         try:
-            future = asyncio.run_coroutine_threadsafe(connect_to_quotex(email, password), ASYNC_LOOP)
-            success, reason = future.result(timeout=60)
-            if success:
-                eel.onLoginSuccess()()
-            else:
-                eel.onLoginError(reason)()
-        except Exception as e:
-            eel.onLoginError(f"{type(e).__name__}: {str(e)}")()
-    threading.Thread(target=run, daemon=True).start()
-
-@eel.expose
-def on_chart_opened():
-    def run():
-        try:
-            if not LOGIN_SUCCESS:
+            CLIENT = Quotex(email=QUOTEX_EMAIL, password=QUOTEX_PASSWORD, host="qxbroker.com", lang="en")
+            check, reason = await CLIENT.connect()
+            if check:
+                await CLIENT.change_account("PRACTICE")
+                await CLIENT.get_all_assets()
+                ASSETS_LOADED = True
+                LOGIN_SUCCESS = True
+                asyncio.create_task(realtime_heartbeat())
+                asyncio.create_task(market_activity_ping())
+                log("✅ Quotex Auto Login Successful!", level=1)
                 return
-            future = asyncio.run_coroutine_threadsafe(chart_opened_loader(CURRENT_ASSET), ASYNC_LOOP)
-            future.result(timeout=30)
+            log(f"⚠️ Login attempt {attempt} failed: {reason}. Retrying...", level=1)
+            await asyncio.sleep(3)
         except Exception as e:
-            if CONSOLE_LEVEL >= 2:
-                print(f"❌ Chart open error: {e}")
+            log(f"❌ Error during auto-login attempt {attempt}: {e}", level=1)
+            await asyncio.sleep(3)
+
+def run_auto_login():
+    future = asyncio.run_coroutine_threadsafe(connect_to_quotex_automated(), ASYNC_LOOP)
+    try: future.result(timeout=60)
+    except Exception as e: print(f"Auto login thread error: {e}")
+
+threading.Thread(target=run_auto_login, daemon=True, name="AutoLoginThread").start()
+
+# ======================
+# Eel Exposed Functions & URL Processing
+# ======================
+@eel.expose
+def process_url_parameters(pair_param: Optional[str], tf_param: Optional[str]):
+    """Processes parameters passed from browser URL query strings"""
+    global CURRENT_TIMEFRAME, CURRENT_ASSET
+    
+    # URL Format parsing logic
+    if not pair_param: pair_param = "USDPHP_otc"
+    if not tf_param or tf_param == "1": tf_param = "1m"
+    elif tf_param.isdigit(): tf_param = f"{tf_param}m"
+    
+    # Internal code to display name handling
+    display_name = ASSET_DISPLAY_MAP.get(pair_param, pair_param)
+    if display_name not in DISPLAY_TO_INTERNAL and pair_param in DISPLAY_TO_INTERNAL:
+        display_name = pair_param
+        
+    if tf_param in TIMEFRAMES:
+        CURRENT_TIMEFRAME = tf_param
+        
+    log(f"📥 URL Request -> Asset: {display_name} | Timeframe: {CURRENT_TIMEFRAME}", level=1)
+    
+    def run():
+        # Wait until backend authentication is done
+        while not LOGIN_SUCCESS:
+            time.sleep(0.5)
+        future = asyncio.run_coroutine_threadsafe(start_streaming(display_name), ASYNC_LOOP)
+        future.result(timeout=20)
+        
     threading.Thread(target=run, daemon=True).start()
 
 @eel.expose
 def change_asset(asset_display: str):
-    def run():
-        try:
-            if not LOGIN_SUCCESS:
-                time.sleep(2)
-            future = asyncio.run_coroutine_threadsafe(start_streaming(asset_display), ASYNC_LOOP)
-            future.result(timeout=15)
-        except Exception as e:
-            if CONSOLE_LEVEL >= 2:
-                print(f"❌ change_asset error: {e}")
-    threading.Thread(target=run, daemon=True).start()
+    threading.Thread(target=lambda: asyncio.run_coroutine_threadsafe(start_streaming(asset_display), ASYNC_LOOP).result(), daemon=True).start()
 
 @eel.expose
 def change_timeframe(tf: str):
     global CURRENT_TIMEFRAME
-    if tf not in TIMEFRAMES:
-        return
+    if tf not in TIMEFRAMES: return
     CURRENT_TIMEFRAME = tf
     if tf in CANDLES.get(CURRENT_ASSET, {}):
         send_to_ui(CURRENT_ASSET, tf)
-        return
-    def load():
-        try:
-            future = asyncio.run_coroutine_threadsafe(
-                load_timeframe_data(CURRENT_ASSET, tf, TIMEFRAMES[tf]), ASYNC_LOOP)
-            future.result(timeout=15)
-            send_to_ui(CURRENT_ASSET, tf)
-        except Exception as e:
-            if CONSOLE_LEVEL >= 2:
-                print(f"❌ Load error {tf}: {e}")
-    threading.Thread(target=load, daemon=True).start()
+    else:
+        threading.Thread(target=lambda: [asyncio.run_coroutine_threadsafe(load_timeframe_data(CURRENT_ASSET, tf, TIMEFRAMES[tf]), ASYNC_LOOP).result(), send_to_ui(CURRENT_ASSET, tf)], daemon=True).start()
 
 @eel.expose
-def get_asset_categories():
-    return ASSET_CATEGORIES
-
+def get_asset_categories(): return ASSET_CATEGORIES
 @eel.expose
-def get_timeframes():
-    return list(TIMEFRAMES.keys())
-
+def get_timeframes(): return list(TIMEFRAMES.keys())
 @eel.expose
-def apply_candle_colors(colors: dict):
-    global CANDLE_COLORS
-    CANDLE_COLORS = colors
-    eel.updateCandleColors(colors)()
-
-@eel.expose
-def get_candle_colors():
-    return CANDLE_COLORS
-
+def get_candle_colors(): return CANDLE_COLORS
 @eel.expose
 def get_connection_status():
-    if CLIENT and CLIENT.api:
-        return {
-            "connected": is_websocket_connected(),
-            "assets_loaded": ASSETS_LOADED,
-            "current_asset": CURRENT_ASSET,
-            "current_timeframe": CURRENT_TIMEFRAME,
-            "login_success": LOGIN_SUCCESS,
-            "realtime_running": REALTIME_RUNNING,
-            "chart_opened": CHART_OPENED
-        }
-    return {"connected": False, "assets_loaded": False, "login_success": False}
+    return {"connected": is_websocket_connected(), "assets_loaded": ASSETS_LOADED, "current_asset": CURRENT_ASSET, "current_timeframe": CURRENT_TIMEFRAME, "login_success": LOGIN_SUCCESS}
 
 # ======================
-# HTML Template Writers
+# Dynamic HTML Generator
 # ======================
-def write_login_html():
-    with open("web/login.html", "w", encoding="utf-8") as f:
-        f.write('''<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Login — QuotexChart</title>
-<script src="/eel.js"></script>
-</head>
-<body>
-<h2>QuotexChart login page Placeholder</h2>
-</body>
-</html>''')
-
 def write_chart_html():
-    with open("web/chart.html", "w", encoding="utf-8") as f:
-        f.write('''<!DOCTYPE html>
+    # অটোমেটিক প্যারামিটার ডিটেকশন সহ প্রিমিয়াম চার্ট UI জেনারেটর
+    html_content = """<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Chart — QuotexChart</title>
-<script src="/eel.js"></script>
+    <meta charset="UTF-8">
+    <title>Quotex Live Pro Chart</title>
+    <script src="/eel.js"></script>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body { margin: 0; background-color: #0c0d14; color: #ffffff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
+        #header { height: 50px; background: #131722; display: flex; align-items: center; padding: 0 20px; border-bottom: 1px solid #2a2e39; justify-content: space-between; }
+        .brand { font-weight: bold; color: #00c510; font-size: 18px; }
+        .status-box { font-size: 13px; background: #1e222d; padding: 5px 12px; border-radius: 4px; border: 1px solid #2a2e39; }
+        #chart-container { width: 100vw; height: calc(100vh - 50px); }
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 20px; background: rgba(19,23,34,0.9); padding: 20px; border-radius: 8px; border: 1px solid #2a2e39; z-index: 99; }
+    </style>
 </head>
 <body>
-<h2>Chart page Placeholder</h2>
+    <div id="loading">🔐 Connecting & Authenticating Background Session...</div>
+    <div id="header">
+        <div class="brand">📈 QUOTEX LIVE CHART</div>
+        <div id="asset-info" style="font-weight: 600;">Loading Asset...</div>
+        <div class="status-box" id="status">Status: Synchronizing...</div>
+    </div>
+    <div id="chart-container"></div>
+
+    <script>
+        let chart, candlestickSeries;
+        
+        // Initialize Lightweight Chart
+        function initChart() {
+            const container = document.getElementById('chart-container');
+            chart = LightweightCharts.createChart(container, {
+                width: container.clientWidth,
+                height: container.clientHeight,
+                layout: { backgroundColor: '#0c0d14', textColor: '#d1d4dc' },
+                grid: { vertLines: { color: '#1f222e' }, horzLines: { color: '#1f222e' } },
+                crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+                rightPriceScale: { borderColor: '#2a2e39' },
+                timeScale: { borderColor: '#2a2e39', timeVisible: true, secondsVisible: true }
+            });
+            candlestickSeries = chart.addCandlestickSeries({
+                upColor: '#00C510', downColor: '#ff0000',
+                borderUpColor: '#00C510', borderDownColor: '#ff0000',
+                wickUpColor: '#00C510', wickDownColor: '#ff0000'
+            });
+            
+            window.addEventListener('resize', () => {
+                chart.resize(container.clientWidth, container.clientHeight);
+            });
+        }
+
+        // Handle Realtime Backend Stream updates
+        eel.expose(updateChart);
+        function updateChart(data) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('asset-info').innerText = `${data.asset} (${data.timeframe})`;
+            document.getElementById('status').innerHTML = `<span style="color:#00c510">● Live Connected</span>`;
+            
+            if (data.candles && data.candles.length > 0) {
+                candlestickSeries.setData(data.candles);
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            
+            // Extract and parse current browser address bar parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const pair = urlParams.get('Pair');      // e.g. USDPHP_otc
+            const timeframe = urlParams.get('timeframe'); // e.g. 1
+            
+            function checkLoginAndLoad() {
+                eel.get_connection_status()(status => {
+                    if (status.login_success) {
+                        document.getElementById('loading').innerText = "📊 Loading Market Candles...";
+                        // Transmit parameters directly to python backend logic
+                        eel.process_url_parameters(pair, timeframe);
+                    } else {
+                        setTimeout(checkLoginAndLoad, 1000);
+                    }
+                });
+            }
+            checkLoginAndLoad();
+        });
+    </script>
 </body>
-</html>''')
+</html>"""
+    with open("web/chart.html", "w", encoding="utf-8") as f:
+        f.write(html_content)
 
 # ======================
-# Main (Modified for Render Cloud Deployment)
+# Application Bootstrap
 # ======================
 if __name__ == '__main__':
     os.makedirs("web", exist_ok=True)
-    write_login_html()
     write_chart_html()
     
-    if CONSOLE_LEVEL >= 1:
-        print("🚀 Quotex Pro Trader — Clean Console Mode")
-        print("✅ Minimal output | Hybrid Lazy Loading | Official Login")
-    
     eel.init('web')
-    
-    # Render এর পরিবেশ থেকে স্বয়ংক্রিয়ভাবে PORT নম্বর নেওয়ার জন্য
     port = int(os.environ.get("PORT", 8080))
     
-    # Cloud সার্ভারের জন্য mode=None এবং host='0.0.0.0' ব্যবহার করা হয়েছে
-    eel.start('login.html', host='0.0.0.0', port=port, mode=None)
+    # Serves the chart.html directly at the root endpoint /
+    eel.start(page='chart.html', host='0.0.0.0', port=port, mode=None)
